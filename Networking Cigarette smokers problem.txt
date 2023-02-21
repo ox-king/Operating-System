@@ -1,0 +1,96 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+#define N 3 // Number of smokers
+#define TOBACCO 0 // ID of smoker with tobacco
+#define PAPER 1 // ID of smoker with paper
+#define MATCHES 2 // ID of smoker with matches
+
+int server_fd, new_socket[N];
+pthread_t agent_thread, smoker_threads[N];
+struct sockaddr_in address;
+
+void* agent(void* arg) {
+    while(1) {
+        // Randomly choose two resources to put on the table
+        int resource1 = rand() % N;
+        int resource2 = rand() % N;
+        while (resource1 == resource2) {
+            resource2 = rand() % N;
+        }
+        
+        // Send the resources to the smokers
+        char message[10];
+        sprintf(message, "%d%d", resource1, resource2);
+        for (int i = 0; i < N; i++) {
+            send(new_socket[i], message, strlen(message), 0);
+        }
+        
+        // Wait for the smokers to finish smoking
+        sleep(1);
+    }
+}
+
+void* smoker(void* arg) {
+    int id = *(int*)arg;
+    char buffer[1024] = {0};
+    while(1) {
+        // Wait for the resources to be available
+        int valread = read(new_socket[id], buffer, 1024);
+        int resource1 = buffer[0] - '0';
+        int resource2 = buffer[1] - '0';
+        
+        // Roll the cigarette and signal the agent
+        printf("Smoker %d is rolling a cigarette\n", id);
+        sleep(1);
+        send(new_socket[id], "done", strlen("done"), 0);
+    }
+}
+
+int main() {
+    // Create the server socket
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Bind the server socket to the specified port
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(PORT);
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Listen for incoming connections
+    if (listen(server_fd, N) < 0) {
+        perror("listen failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Accept the client connections
+    for (int i = 0; i < N; i++) {
+        if ((new_socket[i] = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&address)) < 0) {
+            perror("accept failed");
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+    // Seed the random number generator
+    srand(time(NULL));
+    
+    // Create the agent thread
+    pthread_create(&agent_thread, NULL, agent, NULL);
+    
+    // Create the smoker threads
+    int ids[N] = {TOBACCO, PAPER, MATCHES};
+    for (int i = 0; i < N; i++) {
+        pthread_create(&smoker_threads[i], NULL, smoker, &ids[i]);
+    }

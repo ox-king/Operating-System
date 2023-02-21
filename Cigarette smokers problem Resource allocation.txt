@@ -1,0 +1,100 @@
+#include <stdio.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define N 3 // Number of smokers
+#define TOBACCO 0 // ID of smoker with tobacco
+#define PAPER 1 // ID of smoker with paper
+#define MATCHES 2 // ID of smoker with matches
+
+sem_t agent_sem, tobacco_sem, paper_sem, matches_sem;
+int available_resource;
+
+void* agent(void* arg) {
+    while(1) {
+        // Randomly choose two resources to put on the table
+        int resource1 = rand() % N;
+        int resource2 = rand() % N;
+        while (resource1 == resource2) {
+            resource2 = rand() % N;
+        }
+        available_resource = resource1 + resource2;
+        
+        // Signal the appropriate smokers based on the resources available
+        if (available_resource == TOBACCO + PAPER) {
+            sem_post(&matches_sem);
+        }
+        else if (available_resource == TOBACCO + MATCHES) {
+            sem_post(&paper_sem);
+        }
+        else if (available_resource == PAPER + MATCHES) {
+            sem_post(&tobacco_sem);
+        }
+        
+        // Wait for the smokers to finish smoking
+        sem_wait(&agent_sem);
+    }
+}
+
+void* smoker(void* arg) {
+    int id = *(int*)arg;
+    while(1) {
+        // Wait for the appropriate resources to be available
+        if (id == TOBACCO) {
+            sem_wait(&tobacco_sem);
+            printf("Smoker with tobacco is rolling a cigarette\n");
+            sem_post(&agent_sem);
+        }
+        else if (id == PAPER) {
+            sem_wait(&paper_sem);
+            printf("Smoker with paper is rolling a cigarette\n");
+            sem_post(&agent_sem);
+        }
+        else if (id == MATCHES) {
+            sem_wait(&matches_sem);
+            printf("Smoker with matches is rolling a cigarette\n");
+            sem_post(&agent_sem);
+        }
+        
+        // Smoke the cigarette
+        printf("Smoker %d is smoking\n", id);
+        sleep(1);
+    }
+}
+
+int main() {
+    pthread_t agent_thread, smoker_threads[N];
+    int ids[N] = {TOBACCO, PAPER, MATCHES};
+    
+    // Initialize semaphores
+    sem_init(&agent_sem, 0, 1);
+    sem_init(&tobacco_sem, 0, 0);
+    sem_init(&paper_sem, 0, 0);
+    sem_init(&matches_sem, 0, 0);
+    
+    // Seed the random number generator
+    srand(time(NULL));
+    
+    // Create the agent thread
+    pthread_create(&agent_thread, NULL, agent, NULL);
+    
+    // Create the smoker threads
+    for (int i = 0; i < N; i++) {
+        pthread_create(&smoker_threads[i], NULL, smoker, &ids[i]);
+    }
+    
+    // Wait for the threads to finish
+    pthread_join(agent_thread, NULL);
+    for (int i = 0; i < N; i++) {
+        pthread_join(smoker_threads[i], NULL);
+    }
+    
+    // Destroy the semaphores
+    sem_destroy(&agent_sem);
+    sem_destroy(&tobacco_sem);
+    sem_destroy(&paper_sem);
+    sem_destroy(&matches_sem);
+    
+    return

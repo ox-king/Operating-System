@@ -1,0 +1,77 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <mysql.h>
+#include <pthread.h>
+#include <unistd.h>
+
+#define N 3 // Number of smokers
+#define TOBACCO 0 // ID of smoker with tobacco
+#define PAPER 1 // ID of smoker with paper
+#define MATCHES 2 // ID of smoker with matches
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
+
+void* agent(void* arg) {
+    MYSQL* conn;
+    MYSQL_RES* res;
+    MYSQL_ROW row;
+    char* server = "localhost";
+    char* user = "root";
+    char* password = "password";
+    char* database = "cigarette_smokers";
+    conn = mysql_init(NULL);
+    
+    // Connect to the database
+    if (!mysql_real_connect(conn, server, user, password, database, 0, NULL, 0)) {
+        fprintf(stderr, "%s\n", mysql_error(conn));
+        exit(1);
+    }
+    
+    while(1) {
+        // Randomly choose two resources to put on the table
+        int resource1 = rand() % N;
+        int resource2 = rand() % N;
+        while (resource1 == resource2) {
+            resource2 = rand() % N;
+        }
+        
+        // Start a database transaction
+        mysql_autocommit(conn, 0);
+        mysql_query(conn, "START TRANSACTION");
+        
+        // Lock the database tables to prevent other threads from accessing them
+        pthread_mutex_lock(&mutex);
+        mysql_query(conn, "LOCK TABLES resources WRITE, smokers WRITE");
+        
+        // Check if the resources are available
+        char query[100];
+        sprintf(query, "SELECT COUNT(*) FROM resources WHERE id = %d AND available = 1", resource1);
+        mysql_query(conn, query);
+        res = mysql_store_result(conn);
+        row = mysql_fetch_row(res);
+        int count1 = atoi(row[0]);
+        mysql_free_result(res);
+        sprintf(query, "SELECT COUNT(*) FROM resources WHERE id = %d AND available = 1", resource2);
+        mysql_query(conn, query);
+        res = mysql_store_result(conn);
+        row = mysql_fetch_row(res);
+        int count2 = atoi(row[0]);
+        mysql_free_result(res);
+        
+        // If both resources are available, update the database to mark them as unavailable
+        if (count1 > 0 && count2 > 0) {
+            sprintf(query, "UPDATE resources SET available = 0 WHERE id = %d OR id = %d", resource1, resource2);
+            mysql_query(conn, query);
+            
+            // Signal the smoker with the other resource
+            if (resource1 == TOBACCO && resource2 == PAPER || 
+                resource1 == PAPER && resource2 == TOBACCO) {
+                sprintf(query, "UPDATE smokers SET waiting = 0 WHERE id = %d", MATCHES);
+                mysql_query(conn, query);
+            } else if (resource1 == PAPER && resource2 == MATCHES ||
+                       resource1 == MATCHES && resource2 == PAPER) {
+                sprintf(query, "UPDATE smokers SET waiting = 0 WHERE id = %d", TOBACCO);
+                mysql_query(conn, query);
+            } else {
